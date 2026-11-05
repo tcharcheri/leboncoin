@@ -18,9 +18,15 @@ type getAdResponse struct {
 	PhotoURL   string    `json:"photo_url"`
 	UserID     string    `json:"user_id"`
 	CreatedAt  time.Time `json:"created_at"`
+	Username   *string   `json:"username"`
 }
 
-func adToGetAdResponse(a domain.Ad) getAdResponse {
+func adToGetAdResponse(a domain.AdDetails) getAdResponse {
+	var username *string
+	if a.Username != "" {
+		username = &a.Username
+	}
+
 	return getAdResponse{
 		ID:         int64(a.ID),
 		Title:      a.Title,
@@ -28,6 +34,7 @@ func adToGetAdResponse(a domain.Ad) getAdResponse {
 		PhotoURL:   a.PhotoURL,
 		UserID:     a.UserID.String(),
 		CreatedAt:  a.CreatedAt.UTC(),
+		Username:   username,
 	}
 }
 

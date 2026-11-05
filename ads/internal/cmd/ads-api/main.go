@@ -8,7 +8,9 @@ import (
 	"github.mpi-internal.com/leboncoin/backend-hiring-assessment/ads/internal/cmd/ads-api/dao/postgres"
 	"github.mpi-internal.com/leboncoin/backend-hiring-assessment/ads/internal/cmd/ads-api/http"
 	"github.mpi-internal.com/leboncoin/backend-hiring-assessment/ads/internal/cmd/ads-api/usecase"
+	"github.mpi-internal.com/leboncoin/backend-hiring-assessment/ads/internal/cmd/ads-api/usercache"
 	"github.mpi-internal.com/leboncoin/backend-hiring-assessment/common/httpserver"
+	usersapi "github.mpi-internal.com/leboncoin/backend-hiring-assessment/users/pkg/api"
 )
 
 func main() {
@@ -32,11 +34,12 @@ func run() error {
 		}
 	}()
 
+	users := usercache.New(usersapi.NewClient(cfg.IdentityURL, cfg.IdentityTimeout), cfg.UserCacheTTL, cfg.UserCacheSize)
+
 	router := http.NewRouter(http.Usecases{
 		CreateAd: usecase.NewCreateAdFunc(adDAO),
-		GetAd:    usecase.NewGetAdByIDFunc(adDAO),
+		GetAd:    usecase.NewGetAdByIDFunc(adDAO, users),
 		ListAds:  usecase.NewListAdsFunc(adDAO),
-		DeleteAd: usecase.NewDeleteAdFunc(adDAO),
 	})
 
 	return httpserver.Run(ctx, cfg.HTTPAddr, router)

@@ -23,5 +23,11 @@ type Ad struct {
 	CreatedAt time.Time
 }
 
+type AdDetails struct {
+	Ad
+	// Username is the nickname of the ad owner. It is empty when the user service could not provide it.
+	Username string
+}
+
 // String returns the decimal representation of the identifier.
 func (id AdID) String() string { return strconv.FormatInt(int64(id), 10) }

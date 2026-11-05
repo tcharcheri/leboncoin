@@ -104,11 +104,11 @@ paths:
           example: 1
       responses:
         "200":
-          description: The requested ad.
+          description: The requested ad, with its owner's username.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Ad"
+                $ref: "#/components/schemas/AdDetails"
         "400":
           description: adID is not a valid integer.
         "404":
@@ -180,7 +180,17 @@ components:
           type: string
           format: date-time
           example: "2024-01-15T10:00:00Z"
-
+    AdDetails:
+      allOf:
+        - $ref: "#/components/schemas/Ad"
+        - type: object
+          required: [ username ]
+          properties:
+            username:
+              type: string
+              nullable: true
+              description: Nickname of the ad owner. null when the user service cannot provide it.
+              example: alice
     ListAdsResponse:
       type: object
       required: [ads]
