@@ -40,7 +40,7 @@ There are 2 entities in this sample:
 | `GET` | `/ads/{id}`   | no | Get a single ad                                                                   |
 | `GET` | `/ads`        | no | List ads (filterable by `title`, `user_id`, `min_price_cents`, `max_price_cents`) |
 | `POST` | `/ads/import` | yes | Bulk ad import                                                                    |
-
+| `DELETE` | `/ads/{id}`   | yes | Delete an ad (owner only)                                                         |
 ```bash
 # Health check
 curl -s -v http://localhost:8080/health

@@ -279,3 +279,45 @@ func TestTransaction(t *testing.T) {
 		require.Error(t, dao.Rollback())
 	})
 }
+
+func TestDeleteAd(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("deletes the ad of its owner", func(t *testing.T) {
+		dao, mock := newMockDAO(t)
+		mock.ExpectExec("DELETE FROM ads").
+			WithArgs(int64(42), "user-1").
+			WillReturnResult(sqlmock.NewResult(0, 1))
+
+		err := dao.DeleteAd(ctx, 42, "user-1")
+
+		require.NoError(t, err)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("returns ErrNotFound when no row matches the id and owner", func(t *testing.T) {
+		dao, mock := newMockDAO(t)
+		mock.ExpectExec("DELETE FROM ads").
+			WithArgs(int64(42), "user-1").
+			WillReturnResult(sqlmock.NewResult(0, 0))
+
+		err := dao.DeleteAd(ctx, 42, "user-1")
+
+		require.ErrorIs(t, err, adsdao.ErrNotFound)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("returns error on query failure", func(t *testing.T) {
+		dao, mock := newMockDAO(t)
+		boom := errors.New("db down")
+		mock.ExpectExec("DELETE FROM ads").
+			WithArgs(int64(42), "user-1").
+			WillReturnError(boom)
+
+		err := dao.DeleteAd(ctx, 42, "user-1")
+
+		require.ErrorIs(t, err, boom)
+		assert.NotErrorIs(t, err, adsdao.ErrNotFound)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+}

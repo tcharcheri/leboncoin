@@ -178,6 +178,27 @@ func (d *DAO) CreateAd(ctx context.Context, req adsdao.CreateAdRequest) (domain.
 	return id, nil
 }
 
+// DeleteAd deletes the ad if it belongs to ownerID, or returns dao.ErrNotFound.
+func (d *DAO) DeleteAd(ctx context.Context, id domain.AdID, ownerID domain.UserID) error {
+	const query = `DELETE FROM ads WHERE id = $1 AND user_id = $2::uuid`
+
+	res, err := d.runner().ExecContext(ctx, query, int64(id), string(ownerID))
+	if err != nil {
+		return fmt.Errorf("unable to delete ad: %w", err)
+	}
+
+	deleted, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("unable to delete ad: %w", err)
+	}
+
+	if deleted == 0 {
+		return adsdao.ErrNotFound
+	}
+
+	return nil
+}
+
 func scanAd(row *sql.Row) (domain.Ad, error) {
 	var ad domain.Ad
 	if err := row.Scan(&ad.ID, &ad.Title, &ad.Price, &ad.PhotoURL, &ad.UserID, &ad.CreatedAt); err != nil {

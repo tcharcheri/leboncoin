@@ -116,6 +116,35 @@ paths:
         "500":
           description: Unexpected server error.
 
+    delete:
+      summary: Delete an ad
+      description: Only the owner of the ad can delete it.
+      operationId: deleteAd
+      tags: [ ads ]
+      security:
+        - userID: [ ]
+      parameters:
+        - name: adID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+          example: 1
+      responses:
+        "204":
+          description: Ad deleted.
+        "400":
+          description: adID is not a valid integer.
+        "401":
+          description: Missing Authorization header.
+        "403":
+          description: The ad belongs to another user.
+        "404":
+          description: No ad exists with this ID.
+        "500":
+          description: Unexpected server error.
+
 components:
   securitySchemes:
     userID:
