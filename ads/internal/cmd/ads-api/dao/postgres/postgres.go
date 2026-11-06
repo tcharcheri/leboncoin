@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -194,6 +195,69 @@ func (d *DAO) DeleteAd(ctx context.Context, id domain.AdID, ownerID domain.UserI
 
 	if deleted == 0 {
 		return adsdao.ErrNotFound
+	}
+
+	return nil
+}
+
+// ClaimImport reserves an idempotency key, or returns the import that already used it.
+//
+// ON CONFLICT DO NOTHING relies on the primary key: when two imports race with the same key,
+// the second INSERT waits for the first transaction, then either claims the key (first rolled
+// back) or reads its committed result.
+func (d *DAO) ClaimImport(ctx context.Context, ownerID domain.UserID, key, requestHash string) (adsdao.ImportRecord, bool, error) {
+	const claim = `
+		INSERT INTO ad_imports (user_id, idempotency_key, request_hash)
+		VALUES ($1::uuid, $2, $3)
+		ON CONFLICT (user_id, idempotency_key) DO NOTHING`
+
+	res, err := d.runner().ExecContext(ctx, claim, string(ownerID), key, requestHash)
+	if err != nil {
+		return adsdao.ImportRecord{}, false, fmt.Errorf("unable to claim import: %w", err)
+	}
+
+	claimed, err := res.RowsAffected()
+	if err != nil {
+		return adsdao.ImportRecord{}, false, fmt.Errorf("unable to claim import: %w", err)
+	}
+
+	if claimed == 1 {
+		return adsdao.ImportRecord{}, true, nil
+	}
+
+	const previous = `
+		SELECT request_hash, COALESCE(ad_ids, '[]'::jsonb)
+		FROM ad_imports
+		WHERE user_id = $1::uuid AND idempotency_key = $2`
+
+	var (
+		record adsdao.ImportRecord
+		rawIDs []byte
+	)
+	if err := d.runner().QueryRowContext(ctx, previous, string(ownerID), key).Scan(&record.RequestHash, &rawIDs); err != nil {
+		return adsdao.ImportRecord{}, false, fmt.Errorf("unable to read previous import: %w", err)
+	}
+
+	if err := json.Unmarshal(rawIDs, &record.AdIDs); err != nil {
+		return adsdao.ImportRecord{}, false, fmt.Errorf("unable to decode previous import: %w", err)
+	}
+
+	return record, false, nil
+}
+
+// CompleteImport stores the identifiers created by a claimed import.
+func (d *DAO) CompleteImport(ctx context.Context, ownerID domain.UserID, key string, adIDs []domain.AdID) error {
+	const query = `
+		UPDATE ad_imports SET ad_ids = $3::jsonb
+		WHERE user_id = $1::uuid AND idempotency_key = $2`
+
+	rawIDs, err := json.Marshal(adIDs)
+	if err != nil {
+		return fmt.Errorf("unable to encode import result: %w", err)
+	}
+
+	if _, err := d.runner().ExecContext(ctx, query, string(ownerID), key, string(rawIDs)); err != nil {
+		return fmt.Errorf("unable to complete import: %w", err)
 	}
 
 	return nil

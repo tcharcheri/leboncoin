@@ -62,6 +62,13 @@ curl -s -X POST http://localhost:8080/ads \
   -H 'Authorization: 00000000-0000-0000-0000-000000000001' \
   -H 'Content-Type: application/json' \
   -d '{"title":"Mountain bike","price":120.50,"photo_url":"https://example.com/photos/bike.jpg"}'
+  
+  # Bulk import, safe to retry: reuse the same Idempotency-Key when retrying
+curl -s -X POST http://localhost:8080/ads/import \
+  -H 'Authorization: 00000000-0000-0000-0000-000000000001' \
+  -H 'Idempotency-Key: 6f1d2c9e-7a3b-4e8f-9c1d-2b3a4c5d6e7f' \
+  -H 'Content-Type: application/json' \
+  -d '{"ads":[{"title":"Chair","price":15},{"title":"Table","price":80}]}'
 ```
 
 ## Authentication
@@ -99,3 +106,16 @@ What was done instead:
 - `price_cents` is marked **deprecated** in the OpenAPI spec. It will be removed once web and mobile clients have migrated, measured from usage, with a sunset date agreed with those teams.
 
 Recommended long-term format: `{"amount": "120.50", "currency": "EUR"}`. A string amount keeps exact precision in every client, JavaScript included, and supports other currencies.
+
+
+### Bulk import: atomic and idempotent
+
+The import inserted ads one by one without a transaction: a failure in the middle left the first ads in the database, and retrying the request created them again.
+
+- **Atomic**: the whole import runs in one transaction. It creates every ad or none.
+- **Idempotent**: with an `Idempotency-Key` header, the key is stored in `ad_imports` in the same transaction as the ads. A retry with the same key returns the original ids (`Idempotent-Replayed: true`) without creating anything. This covers the case where the import committed but the response was lost. A failed import rolls the key back too, so it can be retried with the same key.
+- **Concurrency**: the key is claimed with `INSERT ... ON CONFLICT DO NOTHING` on the primary key, so a concurrent import with the same key waits for the first one and then replays its result.
+- **Safety**: a key reused with a different payload is rejected (`422`, detected with a SHA-256 of the payload). Imports are capped at 1000 ads (`413`) to keep transactions short.
+- The header is optional so existing clients keep working; making it mandatory can be agreed with client teams later.
+- A unique constraint on the ad content was rejected: a seller may legitimately publish identical ads.
+- Follow-ups: purge old keys (e.g. after 24 hours) with a scheduled job; use a multi-row `INSERT` or `COPY` if imports become frequent.

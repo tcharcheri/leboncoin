@@ -321,3 +321,73 @@ func TestDeleteAd(t *testing.T) {
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 }
+
+func TestClaimImport(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("claims a new key", func(t *testing.T) {
+		dao, mock := newMockDAO(t)
+		mock.ExpectExec("INSERT INTO ad_imports").
+			WithArgs("user-1", "key-1", "hash-1").
+			WillReturnResult(sqlmock.NewResult(0, 1))
+
+		_, claimed, err := dao.ClaimImport(ctx, "user-1", "key-1", "hash-1")
+
+		require.NoError(t, err)
+		assert.True(t, claimed)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("returns the previous import when the key is taken", func(t *testing.T) {
+		dao, mock := newMockDAO(t)
+		mock.ExpectExec("INSERT INTO ad_imports").
+			WithArgs("user-1", "key-1", "hash-1").
+			WillReturnResult(sqlmock.NewResult(0, 0))
+		mock.ExpectQuery("SELECT request_hash").
+			WithArgs("user-1", "key-1").
+			WillReturnRows(sqlmock.NewRows([]string{"request_hash", "ad_ids"}).AddRow("hash-1", []byte(`[10,11]`)))
+
+		got, claimed, err := dao.ClaimImport(ctx, "user-1", "key-1", "hash-1")
+
+		require.NoError(t, err)
+		assert.False(t, claimed)
+		assert.Equal(t, adsdao.ImportRecord{RequestHash: "hash-1", AdIDs: []domain.AdID{10, 11}}, got)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("returns error on query failure", func(t *testing.T) {
+		dao, mock := newMockDAO(t)
+		boom := errors.New("db down")
+		mock.ExpectExec("INSERT INTO ad_imports").WillReturnError(boom)
+
+		_, _, err := dao.ClaimImport(ctx, "user-1", "key-1", "hash-1")
+
+		require.ErrorIs(t, err, boom)
+	})
+}
+
+func TestCompleteImport(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("stores the created IDs as JSON", func(t *testing.T) {
+		dao, mock := newMockDAO(t)
+		mock.ExpectExec("UPDATE ad_imports").
+			WithArgs("user-1", "key-1", `[10,11]`).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+
+		err := dao.CompleteImport(ctx, "user-1", "key-1", []domain.AdID{10, 11})
+
+		require.NoError(t, err)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("returns error on query failure", func(t *testing.T) {
+		dao, mock := newMockDAO(t)
+		boom := errors.New("db down")
+		mock.ExpectExec("UPDATE ad_imports").WillReturnError(boom)
+
+		err := dao.CompleteImport(ctx, "user-1", "key-1", []domain.AdID{10})
+
+		require.ErrorIs(t, err, boom)
+	})
+}

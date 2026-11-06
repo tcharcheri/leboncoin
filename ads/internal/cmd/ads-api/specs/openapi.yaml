@@ -2,7 +2,7 @@ openapi: "3.0.3"
 
 info:
   title: Ads API
-  description: Classified ads — list, read, and create ads.
+  description: Classified ads — list, read, create, delete and bulk import ads.
   version: "1.0.0"
 
 servers:
@@ -89,6 +89,56 @@ paths:
         "500":
           description: Unexpected server error.
 
+  /ads/import:
+    post:
+      summary: Bulk ad import
+      description: |
+        Creates every ad of the request in a single transaction: either all ads are created, or none.
+        Send an Idempotency-Key header to retry safely: a retry with the same key and payload returns
+        the original result without creating anything.
+      operationId: importAds
+      tags: [ads]
+      security:
+        - userID: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: Unique value chosen by the client for this import (a UUID is recommended), reused on retries.
+          schema:
+            type: string
+            maxLength: 255
+          example: 6f1d2c9e-7a3b-4e8f-9c1d-2b3a4c5d6e7f
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ImportAdsBody"
+      responses:
+        "201":
+          description: Ads created, or replay of a previous import with the same key.
+          headers:
+            Idempotent-Replayed:
+              description: Set to "true" when the response comes from a previous import with the same key.
+              schema:
+                type: string
+                enum: ["true"]
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportAdsResponse"
+        "400":
+          description: Invalid body, invalid price or Idempotency-Key longer than 255 characters. Nothing is created.
+        "401":
+          description: Missing Authorization header.
+        "413":
+          description: More than 1000 ads in one import.
+        "422":
+          description: The Idempotency-Key was already used with a different payload.
+        "500":
+          description: Unexpected server error. Nothing is created; the import can be retried with the same key.
+
   /ads/{adID}:
     get:
       summary: Get an ad by ID
@@ -120,9 +170,9 @@ paths:
       summary: Delete an ad
       description: Only the owner of the ad can delete it.
       operationId: deleteAd
-      tags: [ ads ]
+      tags: [ads]
       security:
-        - userID: [ ]
+        - userID: []
       parameters:
         - name: adID
           in: path
@@ -156,7 +206,7 @@ components:
   schemas:
     Ad:
       type: object
-      required: [id, title, price_cents,price, photo_url, user_id, created_at]
+      required: [id, title, price_cents, price, photo_url, user_id, created_at]
       properties:
         id:
           type: integer
@@ -186,17 +236,19 @@ components:
           type: string
           format: date-time
           example: "2024-01-15T10:00:00Z"
+
     AdDetails:
       allOf:
         - $ref: "#/components/schemas/Ad"
         - type: object
-          required: [ username ]
+          required: [username]
           properties:
             username:
               type: string
               nullable: true
               description: Nickname of the ad owner. null when the user service cannot provide it.
               example: alice
+
     ListAdsResponse:
       type: object
       required: [ads]
@@ -217,7 +269,8 @@ components:
         price_cents:
           type: integer
           format: int64
-          description: Price in euro cents.
+          description: Price in euro cents. Deprecated, use price.
+          deprecated: true
           example: 15000
         price:
           type: number
@@ -228,6 +281,28 @@ components:
         photo_url:
           type: string
           example: https://example.com/bike.jpg
+
+    ImportAdsBody:
+      type: object
+      required: [ads]
+      properties:
+        ads:
+          type: array
+          maxItems: 1000
+          items:
+            $ref: "#/components/schemas/CreateAdBody"
+
+    ImportAdsResponse:
+      type: object
+      required: [ids]
+      properties:
+        ids:
+          type: array
+          description: Identifiers of the created ads, in the order of the request.
+          items:
+            type: integer
+            format: int64
+          example: [101, 102]
 
     CreateAdResponse:
       type: object

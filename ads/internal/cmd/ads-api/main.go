@@ -37,9 +37,11 @@ func run() error {
 	users := usercache.New(usersapi.NewClient(cfg.IdentityURL, cfg.IdentityTimeout), cfg.UserCacheTTL, cfg.UserCacheSize)
 
 	router := http.NewRouter(http.Usecases{
-		CreateAd: usecase.NewCreateAdFunc(adDAO),
-		GetAd:    usecase.NewGetAdByIDFunc(adDAO, users),
-		ListAds:  usecase.NewListAdsFunc(adDAO),
+		CreateAd:  usecase.NewCreateAdFunc(adDAO),
+		DeleteAd:  usecase.NewDeleteAdFunc(adDAO),
+		GetAd:     usecase.NewGetAdByIDFunc(adDAO, users),
+		ImportAds: usecase.NewImportAdsFunc(adDAO),
+		ListAds:   usecase.NewListAdsFunc(adDAO),
 	})
 
 	return httpserver.Run(ctx, cfg.HTTPAddr, router)
