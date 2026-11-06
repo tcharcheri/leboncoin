@@ -2,11 +2,12 @@ package http
 
 import (
 	"encoding/json"
-	"net/http"
 
 	"github.mpi-internal.com/leboncoin/backend-hiring-assessment/ads/internal/cmd/ads-api/domain"
 	"github.mpi-internal.com/leboncoin/backend-hiring-assessment/ads/internal/cmd/ads-api/usecase"
 	"github.mpi-internal.com/leboncoin/backend-hiring-assessment/common/middleware"
+
+	"net/http"
 )
 
 type importAdsBody struct {
@@ -24,14 +25,25 @@ func handlerImportAds(createAd usecase.CreateAdFunc) http.HandlerFunc {
 			rw.WriteHeader(http.StatusBadRequest)
 			return
 		}
-
 		ownerID := domain.UserID(middleware.UserIDFromRequest(r))
+		// Validate every item before inserting any, so a bad price cannot leave a partial import behind.
+		prices := make([]int64, len(body.Ads))
+		for i, item := range body.Ads {
+			priceCents, err := item.priceInCents()
+			if err != nil {
+				rw.WriteHeader(http.StatusBadRequest)
+				return
+			}
+
+			prices[i] = priceCents
+		}
+
 		ids := make([]int64, 0, len(body.Ads))
 
-		for _, item := range body.Ads {
+		for i, item := range body.Ads {
 			adID, err := createAd(r.Context(), usecase.CreateAdRequest{
 				Title:      item.Title,
-				PriceCents: item.PriceCents,
+				PriceCents: prices[i],
 				PhotoURL:   item.PhotoURL,
 				OwnerID:    ownerID,
 			})
@@ -42,7 +54,6 @@ func handlerImportAds(createAd usecase.CreateAdFunc) http.HandlerFunc {
 
 			ids = append(ids, int64(adID))
 		}
-
 		rw.Header().Set("Content-Type", "application/json")
 		rw.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(rw).Encode(importAdsResponse{IDs: ids})

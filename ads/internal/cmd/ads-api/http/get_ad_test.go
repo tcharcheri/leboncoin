@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -52,6 +53,7 @@ func TestHandlerGetAd(t *testing.T) {
 		assert.Equal(t, int64(42), got.ID)
 		assert.Equal(t, "mountain bike", got.Title)
 		assert.Equal(t, int64(15000), got.PriceCents)
+		assert.Equal(t, price(15000), got.Price)
 		assert.Equal(t, "https://example.com/bike.jpg", got.PhotoURL)
 		assert.Equal(t, "user-1", got.UserID)
 		assert.Equal(t, createdAt, got.CreatedAt)
@@ -129,5 +131,21 @@ func TestHandlerGetAd(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 		assert.Equal(t, domain.AdID(7), receivedID)
+	})
+
+	t.Run("exposes price in euros with two decimals next to price_cents", func(t *testing.T) {
+		srv := newGetAdServer(func(_ context.Context, id domain.AdID) (domain.AdDetails, error) {
+			return domain.AdDetails{Ad: domain.Ad{ID: id, Price: 12050}}, nil
+		})
+		defer srv.Close()
+
+		resp, err := http.Get(srv.URL + "/ads/1")
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		raw, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		assert.Contains(t, string(raw), `"price_cents":12050`)
+		assert.Contains(t, string(raw), `"price":120.50`)
 	})
 }

@@ -156,7 +156,7 @@ components:
   schemas:
     Ad:
       type: object
-      required: [id, title, price_cents, photo_url, user_id, created_at]
+      required: [id, title, price_cents,price, photo_url, user_id, created_at]
       properties:
         id:
           type: integer
@@ -168,8 +168,14 @@ components:
         price_cents:
           type: integer
           format: int64
-          description: Price in euro cents.
+          description: Price in euro cents. Deprecated, use price.
+          deprecated: true
           example: 15000
+        price:
+          type: number
+          format: decimal
+          description: Price in euros, always with two decimals. Computed from price_cents, never through a float.
+          example: 150.00
         photo_url:
           type: string
           example: https://example.com/bike.jpg
@@ -202,7 +208,8 @@ components:
 
     CreateAdBody:
       type: object
-      required: [title, price_cents, photo_url]
+      required: [title, photo_url]
+      description: Send either price or price_cents, not both (400 otherwise).
       properties:
         title:
           type: string
@@ -212,6 +219,12 @@ components:
           format: int64
           description: Price in euro cents.
           example: 15000
+        price:
+          type: number
+          format: decimal
+          minimum: 0
+          description: Price in euros, at most two decimals. Exponents are rejected.
+          example: 150.00
         photo_url:
           type: string
           example: https://example.com/bike.jpg

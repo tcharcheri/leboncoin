@@ -2,6 +2,7 @@ package http
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.mpi-internal.com/leboncoin/backend-hiring-assessment/ads/internal/cmd/ads-api/usecase"
@@ -9,9 +10,26 @@ import (
 )
 
 type createAdBody struct {
-	Title      string `json:"title"`
+	Title string `json:"title"`
+	// PriceCents is deprecated: clients should send Price. Both are accepted during the migration.
 	PriceCents int64  `json:"price_cents"`
+	Price      *price `json:"price,omitempty"`
 	PhotoURL   string `json:"photo_url"`
+}
+
+var errAmbiguousPrice = errors.New("send either price or price_cents, not both")
+
+// priceInCents returns the price sent by the client, whichever field it used.
+func (b createAdBody) priceInCents() (int64, error) {
+	if b.Price == nil {
+		return b.PriceCents, nil
+	}
+
+	if b.PriceCents != 0 {
+		return 0, errAmbiguousPrice
+	}
+
+	return int64(*b.Price), nil
 }
 
 type createAdResponse struct {
@@ -27,9 +45,15 @@ func handlerCreateAd(createAd usecase.CreateAdFunc) http.HandlerFunc {
 			return
 		}
 
+		priceCents, err := body.priceInCents()
+		if err != nil {
+			rw.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
 		adID, err := createAd(r.Context(), usecase.CreateAdRequest{
 			Title:      body.Title,
-			PriceCents: body.PriceCents,
+			PriceCents: priceCents,
 			PhotoURL:   body.PhotoURL,
 			OwnerID:    middleware.UserIDFromHeader(r),
 		})

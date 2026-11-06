@@ -56,6 +56,12 @@ curl -s -X POST http://localhost:8080/ads \
   -H 'Authorization: 00000000-0000-0000-0000-000000000001' \
   -H 'Content-Type: application/json' \
   -d '{"title":"Mountain bike","price_cents":12000,"photo_url":"https://example.com/photos/bike.jpg"}'
+  
+  # Create an ad with a price in euros (preferred; price_cents is deprecated)
+curl -s -X POST http://localhost:8080/ads \
+  -H 'Authorization: 00000000-0000-0000-0000-000000000001' \
+  -H 'Content-Type: application/json' \
+  -d '{"title":"Mountain bike","price":120.50,"photo_url":"https://example.com/photos/bike.jpg"}'
 ```
 
 ## Authentication
@@ -75,3 +81,21 @@ To launch all the tests:
 ```shell
 go test ./...
 ```
+
+## Design decisions Very important
+
+### `price_cents` → `price` (float)
+
+Renaming the field to a float was not applied as-is:
+
+- **Floats are unsafe for money**: `0.1 + 0.2 != 0.3` in binary floating point, which leads to rounding errors in totals, comparisons and filters.
+- **Renaming breaks existing clients**: mobile apps already installed keep reading `price_cents` and cannot be force-updated.
+
+What was done instead:
+
+- **Additive change**: responses expose `price` (euros, always two decimals, e.g. `120.50`) **next to** `price_cents`.
+- **Cents stay the source of truth** in the database and the domain. `price` is formatted from integer cents and never goes through `float64`.
+- **Input accepts either** `price` or `price_cents` during the migration. Sending both is rejected (`400`). Sub-cent or negative prices are rejected.
+- `price_cents` is marked **deprecated** in the OpenAPI spec. It will be removed once web and mobile clients have migrated, measured from usage, with a sunset date agreed with those teams.
+
+Recommended long-term format: `{"amount": "120.50", "currency": "EUR"}`. A string amount keeps exact precision in every client, JavaScript included, and supports other currencies.
