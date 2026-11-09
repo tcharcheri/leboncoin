@@ -20,6 +20,9 @@ type Config struct {
 	UserCacheTTL time.Duration
 	// UserCacheSize caps the number of usernames kept in memory.
 	UserCacheSize int
+	// DBMaxOpenConns caps the database connections of one instance. Size it with the number of
+	// instances: PostgreSQL accepts 100 connections by default.
+	DBMaxOpenConns int
 }
 
 // Load reads the configuration from the environment.
@@ -31,6 +34,7 @@ func Load() Config {
 		IdentityTimeout: duration("IDENTITY_TIMEOUT", 300*time.Millisecond),
 		UserCacheTTL:    duration("USER_CACHE_TTL", 5*time.Minute),
 		UserCacheSize:   integer("USER_CACHE_SIZE", 10_000),
+		DBMaxOpenConns:  integer("DB_MAX_OPEN_CONNS", 20),
 	}
 }
 

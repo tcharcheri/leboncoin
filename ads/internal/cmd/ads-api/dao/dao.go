@@ -2,8 +2,9 @@ package dao
 
 import (
 	"context"
-	"github.mpi-internal.com/leboncoin/backend-hiring-assessment/ads/internal/cmd/ads-api/domain"
 	"time"
+
+	"github.mpi-internal.com/leboncoin/backend-hiring-assessment/ads/internal/cmd/ads-api/domain"
 )
 
 // Store reads and writes ads. It is implemented both by the DAO, where every call is its own transaction, and by a Tx opened from it.
@@ -66,6 +67,8 @@ type SearchAdsRequest struct {
 	MinPriceCents int64
 	MaxPriceCents int64
 	Title         string
+	Limit         int
+	Offset        int
 }
 
 // CreateAdRequest carries the data needed to create an ad.

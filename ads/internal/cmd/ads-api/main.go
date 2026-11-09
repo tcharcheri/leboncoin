@@ -24,7 +24,7 @@ func run() error {
 	ctx := context.Background()
 	cfg := Load()
 
-	adDAO, err := postgres.New(ctx, cfg.DatabaseURL)
+	adDAO, err := postgres.New(ctx, cfg.DatabaseURL, cfg.DBMaxOpenConns)
 	if err != nil {
 		return err
 	}
@@ -36,13 +36,16 @@ func run() error {
 
 	users := usercache.New(usersapi.NewClient(cfg.IdentityURL, cfg.IdentityTimeout), cfg.UserCacheTTL, cfg.UserCacheSize)
 
-	router := http.NewRouter(http.Usecases{
+	router, err := http.NewRouter(http.Usecases{
 		CreateAd:  usecase.NewCreateAdFunc(adDAO),
 		DeleteAd:  usecase.NewDeleteAdFunc(adDAO),
 		GetAd:     usecase.NewGetAdByIDFunc(adDAO, users),
 		ImportAds: usecase.NewImportAdsFunc(adDAO),
 		ListAds:   usecase.NewListAdsFunc(adDAO),
 	})
+	if err != nil {
+		return err
+	}
 
 	return httpserver.Run(ctx, cfg.HTTPAddr, router)
 }

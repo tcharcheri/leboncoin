@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -31,17 +32,22 @@ type queryRunner interface {
 }
 
 // New opens a connection pool to the given DSN and checks that the database is reachable. The caller is responsible for calling Close.
-func New(ctx context.Context, dsn string) (*DAO, error) {
+func New(ctx context.Context, dsn string, maxOpenConns int) (*DAO, error) {
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("unable to open database: %w", err)
 	}
 
-	db.SetMaxOpenConns(10)
-	db.SetMaxIdleConns(5)
+	// Keeping every open connection idle in the pool avoids reconnecting under a read-heavy load.
+	db.SetMaxOpenConns(maxOpenConns)
+	db.SetMaxIdleConns(maxOpenConns)
 	db.SetConnMaxLifetime(time.Hour)
+	db.SetConnMaxIdleTime(5 * time.Minute)
 
-	if err := db.PingContext(ctx); err != nil {
+	pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	if err := db.PingContext(pingCtx); err != nil {
 		_ = db.Close()
 
 		return nil, fmt.Errorf("unable to reach database: %w", err)
@@ -110,19 +116,25 @@ func (d *DAO) Rollback() error {
 
 // SearchAds returns all ads matching the filters.
 func (d *DAO) SearchAds(ctx context.Context, req adsdao.SearchAdsRequest) ([]domain.Ad, error) {
+	// user_id is compared as a UUID, not cast to text, so that its index can be used.
+	// The ORDER BY matches the ads_created_at_id_idx index; id breaks ties so pages are stable.
 	const query = `
 		SELECT ` + adColumns + `
 		FROM ads
-		WHERE ($1 = '' OR user_id::text = $1)
+		WHERE ($1 = '' OR user_id = NULLIF($1, '')::uuid)
 		  AND ($2 = 0 OR price_cents >= $2)
 		  AND ($3 = 0 OR price_cents <= $3)
-		  AND ($4 = '' OR title ILIKE '%' || $4 || '%')`
+		  AND ($4 = '' OR title ILIKE '%' || $4 || '%')
+		ORDER BY created_at DESC, id DESC
+		LIMIT $5 OFFSET $6`
 
 	rows, err := d.runner().QueryContext(ctx, query,
-		req.OwnerID,
+		string(req.OwnerID),
 		req.MinPriceCents,
 		req.MaxPriceCents,
-		req.Title,
+		escapeLike(req.Title),
+		req.Limit,
+		req.Offset,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("unable to search ads: %w", err)
@@ -319,4 +331,9 @@ func scanAd(row *sql.Row) (domain.Ad, error) {
 	}
 
 	return ad, nil
+}
+
+// escapeLike makes LIKE wildcards in user input match literally: searching "100%" must not match everything.
+func escapeLike(s string) string {
+	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
 }

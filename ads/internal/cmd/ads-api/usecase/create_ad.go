@@ -57,6 +57,12 @@ func NewCreateAdFunc(adDAO adsdao.DAO) CreateAdFunc {
 }
 
 func (uc createAd) createAd(ctx context.Context, req CreateAdRequest) (domain.AdID, error) {
+
+	// Invalid input never reaches the database, and never consumes the quota.
+	if err := domain.ValidateAd(req.Title, req.PriceCents, req.PhotoURL); err != nil {
+		return 0, err
+	}
+
 	tx, err := uc.adDAO.Begin(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("unable to create ad: %w", err)

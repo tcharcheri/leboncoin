@@ -34,10 +34,10 @@ func TestSearchAds(t *testing.T) {
 			AddRow(int64(1), "bike", int64(5000), "https://example.com/bike.jpg", "user-1", createdAt).
 			AddRow(int64(2), "scooter", int64(12000), "https://example.com/scooter.jpg", "user-2", createdAt)
 		mock.ExpectQuery("SELECT").
-			WithArgs("", int64(0), int64(0), "").
+			WithArgs("", int64(0), int64(0), "", 21, 0).
 			WillReturnRows(rows)
 
-		got, err := dao.SearchAds(ctx, adsdao.SearchAdsRequest{})
+		got, err := dao.SearchAds(ctx, adsdao.SearchAdsRequest{Limit: 21})
 
 		require.NoError(t, err)
 		require.Len(t, got, 2)
@@ -51,10 +51,10 @@ func TestSearchAds(t *testing.T) {
 	t.Run("returns nil when no ads match", func(t *testing.T) {
 		dao, mock := newMockDAO(t)
 		mock.ExpectQuery("SELECT").
-			WithArgs("", int64(0), int64(0), "bike").
+			WithArgs("", int64(0), int64(0), "bike", 21, 0).
 			WillReturnRows(sqlmock.NewRows(adCols))
 
-		got, err := dao.SearchAds(ctx, adsdao.SearchAdsRequest{Title: "bike"})
+		got, err := dao.SearchAds(ctx, adsdao.SearchAdsRequest{Title: "bike", Limit: 21})
 
 		require.NoError(t, err)
 		assert.Nil(t, got)
@@ -65,13 +65,36 @@ func TestSearchAds(t *testing.T) {
 		dao, mock := newMockDAO(t)
 		boom := errors.New("db down")
 		mock.ExpectQuery("SELECT").
-			WithArgs("", int64(0), int64(0), "").
+			WithArgs("", int64(0), int64(0), "", 21, 0).
 			WillReturnError(boom)
 
-		_, err := dao.SearchAds(ctx, adsdao.SearchAdsRequest{})
+		_, err := dao.SearchAds(ctx, adsdao.SearchAdsRequest{Limit: 21})
 
 		require.Error(t, err)
 		assert.ErrorIs(t, err, boom)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestSearchAdsQuery(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("escapes LIKE wildcards and passes owner and page", func(t *testing.T) {
+		dao, mock := newMockDAO(t)
+		mock.ExpectQuery(`ORDER BY created_at DESC, id DESC\s+LIMIT \$5 OFFSET \$6`).
+			WithArgs("00000000-0000-0000-0000-000000000001", int64(100), int64(900), `100\%\_off`, 11, 20).
+			WillReturnRows(sqlmock.NewRows(adCols))
+
+		_, err := dao.SearchAds(ctx, adsdao.SearchAdsRequest{
+			OwnerID:       "00000000-0000-0000-0000-000000000001",
+			MinPriceCents: 100,
+			MaxPriceCents: 900,
+			Title:         "100%_off",
+			Limit:         11,
+			Offset:        20,
+		})
+
+		require.NoError(t, err)
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 }

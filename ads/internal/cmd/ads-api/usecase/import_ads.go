@@ -63,6 +63,13 @@ func (uc importAds) importAds(ctx context.Context, req ImportAdsRequest) (Import
 		return ImportAdsResult{}, ErrTooManyAds
 	}
 
+	// Validate every ad before opening the transaction: a bad ad rejects the whole import up front.
+	for i, item := range req.Ads {
+		if err := domain.ValidateAd(item.Title, item.PriceCents, item.PhotoURL); err != nil {
+			return ImportAdsResult{}, fmt.Errorf("ad #%d: %w", i, err)
+		}
+	}
+
 	tx, err := uc.adDAO.Begin(ctx)
 	if err != nil {
 		return ImportAdsResult{}, fmt.Errorf("unable to import ads: %w", err)

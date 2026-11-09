@@ -16,10 +16,15 @@ func Run(ctx context.Context, addr string, handler http.Handler) error {
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	// Every phase of a request is bounded, so slow or idle clients cannot hold connections forever.
 	server := &http.Server{
 		Addr:              addr,
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    64 << 10,
 	}
 
 	serverErrors := make(chan error, 1)

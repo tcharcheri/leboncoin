@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.mpi-internal.com/leboncoin/backend-hiring-assessment/ads/internal/cmd/ads-api/domain"
 	"github.mpi-internal.com/leboncoin/backend-hiring-assessment/ads/internal/cmd/ads-api/usecase"
 	"github.mpi-internal.com/leboncoin/backend-hiring-assessment/common/middleware"
 )
@@ -37,7 +38,7 @@ func handlerImportAds(importAds usecase.ImportAdsFunc) http.HandlerFunc {
 
 		var body importAdsBody
 		if err := decodeBody(r, &body); err != nil {
-			rw.WriteHeader(http.StatusBadRequest)
+			writeDecodeError(rw, err)
 			return
 		}
 
@@ -60,6 +61,9 @@ func handlerImportAds(importAds usecase.ImportAdsFunc) http.HandlerFunc {
 
 		switch {
 		case err == nil:
+		case errors.Is(err, domain.ErrInvalidAd):
+			writeError(rw, http.StatusBadRequest, err.Error())
+			return
 		case errors.Is(err, usecase.ErrTooManyAds):
 			rw.WriteHeader(http.StatusRequestEntityTooLarge)
 			return

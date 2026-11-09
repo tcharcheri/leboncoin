@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.mpi-internal.com/leboncoin/backend-hiring-assessment/ads/internal/cmd/ads-api/domain"
 	"github.mpi-internal.com/leboncoin/backend-hiring-assessment/ads/internal/cmd/ads-api/usecase"
 	"github.mpi-internal.com/leboncoin/backend-hiring-assessment/common/middleware"
 )
@@ -45,7 +46,7 @@ func handlerCreateAd(createAd usecase.CreateAdFunc) http.HandlerFunc {
 	return func(rw http.ResponseWriter, r *http.Request) {
 		var body createAdBody
 		if err := decodeBody(r, &body); err != nil {
-			rw.WriteHeader(http.StatusBadRequest)
+			writeDecodeError(rw, err)
 			return
 		}
 
@@ -65,6 +66,9 @@ func handlerCreateAd(createAd usecase.CreateAdFunc) http.HandlerFunc {
 		var quotaErr *usecase.QuotaExceededError
 		switch {
 		case err == nil:
+		case errors.Is(err, domain.ErrInvalidAd):
+			writeError(rw, http.StatusBadRequest, err.Error())
+			return
 		case errors.As(err, &quotaErr):
 			rw.Header().Set("Retry-After", retryAfterSeconds(quotaErr.RetryAfter))
 			rw.WriteHeader(http.StatusTooManyRequests)

@@ -15,42 +15,53 @@ import (
 
 func TestListAds(t *testing.T) {
 	ctx := context.Background()
+	ads := func(n int) []domain.Ad {
+		out := make([]domain.Ad, n)
+		for i := range out {
+			out[i] = domain.Ad{ID: domain.AdID(i + 1)}
+		}
+		return out
+	}
 
-	t.Run("nominal", func(t *testing.T) {
-		t.Run("returns all matching ads", func(t *testing.T) {
-			m := mock.New(t)
-			want := []domain.Ad{
-				{ID: 1, Title: "bike", Price: 5000, UserID: "user-1"},
-				{ID: 2, Title: "scooter", Price: 12000, UserID: "user-2"},
-			}
-			req := adsdao.SearchAdsRequest{Title: "bike"}
-			m.On("SearchAds", ctx, req).Return(want, nil)
+	t.Run("forwards the filters and asks one extra row for the default page size", func(t *testing.T) {
+		m := mock.New(t)
+		m.On("SearchAds", ctx, adsdao.SearchAdsRequest{Title: "bike", OwnerID: "user-1", MinPriceCents: 100, MaxPriceCents: 900, Limit: 21}).
+			Return(ads(2), nil).Once()
 
-			got, err := usecase.NewListAdsFunc(m)(ctx, usecase.ListAdsRequest{Title: "bike"})
+		got, err := usecase.NewListAdsFunc(m)(ctx, usecase.ListAdsRequest{Title: "bike", OwnerID: "user-1", MinPriceCents: 100, MaxPriceCents: 900})
 
-			require.NoError(t, err)
-			assert.Equal(t, want, got)
-		})
+		require.NoError(t, err)
+		assert.Equal(t, usecase.ListAdsResult{Ads: ads(2)}, got)
+	})
 
-		t.Run("returns empty slice when no ads match", func(t *testing.T) {
-			m := mock.New(t)
-			m.On("SearchAds", ctx, adsdao.SearchAdsRequest{Title: "ufo"}).Return(nil, nil)
+	t.Run("reports another page when the DAO returns the extra row", func(t *testing.T) {
+		m := mock.New(t)
+		m.On("SearchAds", ctx, adsdao.SearchAdsRequest{Limit: 3, Offset: 10}).Return(ads(3), nil).Once()
 
-			got, err := usecase.NewListAdsFunc(m)(ctx, usecase.ListAdsRequest{Title: "ufo"})
+		got, err := usecase.NewListAdsFunc(m)(ctx, usecase.ListAdsRequest{Limit: 2, Offset: 10})
 
-			require.NoError(t, err)
-			assert.Nil(t, got)
-		})
+		require.NoError(t, err)
+		assert.Equal(t, usecase.ListAdsResult{Ads: ads(2), HasMore: true}, got)
+	})
+
+	t.Run("caps the page size", func(t *testing.T) {
+		m := mock.New(t)
+		m.On("SearchAds", ctx, adsdao.SearchAdsRequest{Limit: usecase.MaxPageSize + 1}).Return(nil, nil).Once()
+
+		got, err := usecase.NewListAdsFunc(m)(ctx, usecase.ListAdsRequest{Limit: 10_000})
+
+		require.NoError(t, err)
+		assert.Empty(t, got.Ads)
+		assert.False(t, got.HasMore)
 	})
 
 	t.Run("wraps DAO errors", func(t *testing.T) {
 		m := mock.New(t)
 		dbErr := errors.New("connection reset")
-		m.On("SearchAds", ctx, adsdao.SearchAdsRequest{}).Return(nil, dbErr)
+		m.On("SearchAds", ctx, adsdao.SearchAdsRequest{Limit: 21}).Return(nil, dbErr).Once()
 
 		_, err := usecase.NewListAdsFunc(m)(ctx, usecase.ListAdsRequest{})
 
-		require.Error(t, err)
-		assert.ErrorIs(t, err, dbErr)
+		require.ErrorIs(t, err, dbErr)
 	})
 }
