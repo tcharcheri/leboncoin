@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -29,9 +30,21 @@ func TestCreateAd(t *testing.T) {
 		OwnerID:    "user-1",
 	}
 
-	t.Run("nominal", func(t *testing.T) {
+	// withinQuota sets up a transaction where the user already published `published` ads.
+	withinQuota := func(m *mock.Mock, published int) {
+		m.On("Begin", ctx).Return(nil).Once()
+		m.On("LockPublications", ctx, domain.UserID("user-1")).Return(nil).Once()
+		m.On("RecentPublications", ctx, domain.UserID("user-1"), 24*time.Hour).
+			Return(adsdao.PublicationStats{Count: published, NextSlotIn: 3 * time.Hour}, nil).Once()
+		m.On("Rollback").Return(nil).Once()
+	}
+
+	t.Run("nominal: creates the ad and records the publication in one transaction", func(t *testing.T) {
 		m := mock.New(t)
-		m.On("CreateAd", ctx, daoReq).Return(domain.AdID(7), nil)
+		withinQuota(m, 4)
+		m.On("CreateAd", ctx, daoReq).Return(domain.AdID(7), nil).Once()
+		m.On("RecordPublication", ctx, domain.UserID("user-1"), domain.AdID(7)).Return(nil).Once()
+		m.On("Commit").Return(nil).Once()
 
 		got, err := usecase.NewCreateAdFunc(m)(ctx, ucReq)
 
@@ -39,14 +52,56 @@ func TestCreateAd(t *testing.T) {
 		assert.Equal(t, domain.AdID(7), got)
 	})
 
-	t.Run("error from dao", func(t *testing.T) {
+	t.Run("rejects the 6th publication of the window and tells when to retry", func(t *testing.T) {
 		m := mock.New(t)
-		dbErr := errors.New("connection reset")
-		m.On("CreateAd", ctx, daoReq).Return(domain.AdID(0), dbErr)
+		withinQuota(m, 5)
 
 		_, err := usecase.NewCreateAdFunc(m)(ctx, ucReq)
 
-		require.Error(t, err)
-		assert.ErrorIs(t, err, dbErr)
+		require.ErrorIs(t, err, usecase.ErrQuotaExceeded)
+
+		var quotaErr *usecase.QuotaExceededError
+		require.ErrorAs(t, err, &quotaErr)
+		assert.Equal(t, 3*time.Hour, quotaErr.RetryAfter)
+		m.AssertNotCalled(t, "CreateAd")
+		m.AssertNotCalled(t, "Commit")
+	})
+
+	t.Run("error from dao rolls back", func(t *testing.T) {
+		m := mock.New(t)
+		withinQuota(m, 0)
+		dbErr := errors.New("connection reset")
+		m.On("CreateAd", ctx, daoReq).Return(domain.AdID(0), dbErr).Once()
+
+		_, err := usecase.NewCreateAdFunc(m)(ctx, ucReq)
+
+		require.ErrorIs(t, err, dbErr)
+		m.AssertNotCalled(t, "Commit")
+	})
+
+	t.Run("error when the publication cannot be recorded rolls back the ad", func(t *testing.T) {
+		m := mock.New(t)
+		withinQuota(m, 0)
+		dbErr := errors.New("connection reset")
+		m.On("CreateAd", ctx, daoReq).Return(domain.AdID(7), nil).Once()
+		m.On("RecordPublication", ctx, domain.UserID("user-1"), domain.AdID(7)).Return(dbErr).Once()
+
+		_, err := usecase.NewCreateAdFunc(m)(ctx, ucReq)
+
+		require.ErrorIs(t, err, dbErr)
+		m.AssertNotCalled(t, "Commit")
+	})
+
+	t.Run("error when the lock cannot be taken", func(t *testing.T) {
+		m := mock.New(t)
+		dbErr := errors.New("connection reset")
+		m.On("Begin", ctx).Return(nil).Once()
+		m.On("LockPublications", ctx, domain.UserID("user-1")).Return(dbErr).Once()
+		m.On("Rollback").Return(nil).Once()
+
+		_, err := usecase.NewCreateAdFunc(m)(ctx, ucReq)
+
+		require.ErrorIs(t, err, dbErr)
+		m.AssertNotCalled(t, "RecentPublications")
 	})
 }

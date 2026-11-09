@@ -263,6 +263,51 @@ func (d *DAO) CompleteImport(ctx context.Context, ownerID domain.UserID, key str
 	return nil
 }
 
+// LockPublications takes a transaction-level advisory lock on the user. A concurrent publication
+// by the same user waits here until this transaction ends; other users are not affected.
+func (d *DAO) LockPublications(ctx context.Context, ownerID domain.UserID) error {
+	const query = `SELECT pg_advisory_xact_lock(hashtextextended('ad_publications:' || $1, 0))`
+
+	if _, err := d.runner().ExecContext(ctx, query, string(ownerID)); err != nil {
+		return fmt.Errorf("unable to lock publications: %w", err)
+	}
+
+	return nil
+}
+
+// RecentPublications counts the user's publications over the last window. Time is taken from the
+// database, the same clock that stamps published_at.
+func (d *DAO) RecentPublications(ctx context.Context, ownerID domain.UserID, window time.Duration) (adsdao.PublicationStats, error) {
+	const query = `
+		SELECT count(*),
+		       COALESCE(EXTRACT(EPOCH FROM min(published_at) + make_interval(secs => $2) - now()), 0)
+		FROM ad_publications
+		WHERE user_id = $1::uuid AND published_at > now() - make_interval(secs => $2)`
+
+	var (
+		stats       adsdao.PublicationStats
+		nextSlotSec float64
+	)
+	if err := d.runner().QueryRowContext(ctx, query, string(ownerID), window.Seconds()).Scan(&stats.Count, &nextSlotSec); err != nil {
+		return adsdao.PublicationStats{}, fmt.Errorf("unable to count publications: %w", err)
+	}
+
+	stats.NextSlotIn = time.Duration(nextSlotSec * float64(time.Second))
+
+	return stats, nil
+}
+
+// RecordPublication logs an ad published through the API.
+func (d *DAO) RecordPublication(ctx context.Context, ownerID domain.UserID, adID domain.AdID) error {
+	const query = `INSERT INTO ad_publications (user_id, ad_id) VALUES ($1::uuid, $2)`
+
+	if _, err := d.runner().ExecContext(ctx, query, string(ownerID), int64(adID)); err != nil {
+		return fmt.Errorf("unable to record publication: %w", err)
+	}
+
+	return nil
+}
+
 func scanAd(row *sql.Row) (domain.Ad, error) {
 	var ad domain.Ad
 	if err := row.Scan(&ad.ID, &ad.Title, &ad.Price, &ad.PhotoURL, &ad.UserID, &ad.CreatedAt); err != nil {

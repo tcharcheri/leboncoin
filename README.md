@@ -119,3 +119,14 @@ The import inserted ads one by one without a transaction: a failure in the middl
 - The header is optional so existing clients keep working; making it mandatory can be agreed with client teams later.
 - A unique constraint on the ad content was rejected: a seller may legitimately publish identical ads.
 - Follow-ups: purge old keys (e.g. after 24 hours) with a scheduled job; use a multi-row `INSERT` or `COPY` if imports become frequent.
+
+
+
+### Publication quota: 5 ads per rolling 24 hours
+
+- **Rolling window**: publications are counted over the last 24 hours (`published_at > now() - 24h`), not per calendar day, so the quota cannot be doubled around midnight.
+- **Concurrency-safe**: the check and the insert run in one transaction, behind a per-user PostgreSQL advisory lock (`pg_advisory_xact_lock`). Concurrent requests from the same user are serialized; other users are not affected. A Go mutex would only protect a single instance of the API.
+- **Publications log**: the quota counts rows of `ad_publications`, written in the same transaction as the ad. Deleting an ad does not give a slot back, and bulk imports never write there, so they are excluded by construction.
+- **Client-friendly**: an exceeded quota answers `429 Too Many Requests` with a `Retry-After` header (seconds until the oldest publication leaves the window).
+- **Interpretation to confirm with the product owner**: "it does not apply to the bulk import" was read as "imports are not limited and do not consume the POST /ads quota".
+- Follow-ups: purge publications older than the window with a scheduled job; make the limit configurable if product needs it.

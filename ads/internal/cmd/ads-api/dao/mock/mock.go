@@ -2,11 +2,11 @@ package mock
 
 import (
 	"context"
-	"testing"
-
 	"github.com/stretchr/testify/mock"
 	adsdao "github.mpi-internal.com/leboncoin/backend-hiring-assessment/ads/internal/cmd/ads-api/dao"
 	"github.mpi-internal.com/leboncoin/backend-hiring-assessment/ads/internal/cmd/ads-api/domain"
+	"testing"
+	"time"
 )
 
 // Mock is a testify-based implementation of dao.DAO.
@@ -68,6 +68,24 @@ func (m *Mock) ClaimImport(ctx context.Context, ownerID domain.UserID, key, requ
 // CompleteImport returns the error set on the mock.
 func (m *Mock) CompleteImport(ctx context.Context, ownerID domain.UserID, key string, adIDs []domain.AdID) error {
 	return m.Called(ctx, ownerID, key, adIDs).Error(0)
+}
+
+// LockPublications returns the error set on the mock.
+func (m *Mock) LockPublications(ctx context.Context, ownerID domain.UserID) error {
+	return m.Called(ctx, ownerID).Error(0)
+}
+
+// RecentPublications returns the stats and error set on the mock.
+func (m *Mock) RecentPublications(ctx context.Context, ownerID domain.UserID, window time.Duration) (adsdao.PublicationStats, error) {
+	args := m.Called(ctx, ownerID, window)
+	stats, _ := args.Get(0).(adsdao.PublicationStats)
+
+	return stats, args.Error(1)
+}
+
+// RecordPublication returns the error set on the mock.
+func (m *Mock) RecordPublication(ctx context.Context, ownerID domain.UserID, adID domain.AdID) error {
+	return m.Called(ctx, ownerID, adID).Error(0)
 }
 
 // Begin returns the mock itself as the transaction, so expectations stay set on a single object, and the error set on the mock.

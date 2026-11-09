@@ -2,8 +2,8 @@ package dao
 
 import (
 	"context"
-
 	"github.mpi-internal.com/leboncoin/backend-hiring-assessment/ads/internal/cmd/ads-api/domain"
+	"time"
 )
 
 // Store reads and writes ads. It is implemented both by the DAO, where every call is its own transaction, and by a Tx opened from it.
@@ -22,6 +22,20 @@ type Store interface {
 	ClaimImport(ctx context.Context, ownerID domain.UserID, key, requestHash string) (ImportRecord, bool, error)
 	// CompleteImport stores the identifiers created by a claimed import.
 	CompleteImport(ctx context.Context, ownerID domain.UserID, key string, adIDs []domain.AdID) error
+	// LockPublications serializes the publications of one user until the end of the transaction,
+	// so that concurrent requests cannot both pass the quota check.
+	LockPublications(ctx context.Context, ownerID domain.UserID) error
+	// RecentPublications counts the ads the user published over the last window.
+	RecentPublications(ctx context.Context, ownerID domain.UserID, window time.Duration) (PublicationStats, error)
+	// RecordPublication logs an ad published through the API, for the quota.
+	RecordPublication(ctx context.Context, ownerID domain.UserID, adID domain.AdID) error
+}
+
+// PublicationStats describes the publications of a user over a rolling window.
+type PublicationStats struct {
+	Count int
+	// NextSlotIn is how long until the oldest publication leaves the window. Zero when Count is 0.
+	NextSlotIn time.Duration
 }
 
 // ImportRecord is a past import found under an idempotency key.

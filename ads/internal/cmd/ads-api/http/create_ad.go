@@ -3,7 +3,11 @@ package http
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
+	"math"
 	"net/http"
+	"strconv"
+	"time"
 
 	"github.mpi-internal.com/leboncoin/backend-hiring-assessment/ads/internal/cmd/ads-api/usecase"
 	"github.mpi-internal.com/leboncoin/backend-hiring-assessment/common/middleware"
@@ -55,9 +59,18 @@ func handlerCreateAd(createAd usecase.CreateAdFunc) http.HandlerFunc {
 			Title:      body.Title,
 			PriceCents: priceCents,
 			PhotoURL:   body.PhotoURL,
-			OwnerID:    middleware.UserIDFromHeader(r),
+			OwnerID:    middleware.UserIDFromRequest(r),
 		})
-		if err != nil {
+
+		var quotaErr *usecase.QuotaExceededError
+		switch {
+		case err == nil:
+		case errors.As(err, &quotaErr):
+			rw.Header().Set("Retry-After", retryAfterSeconds(quotaErr.RetryAfter))
+			rw.WriteHeader(http.StatusTooManyRequests)
+			return
+		default:
+			slog.ErrorContext(r.Context(), "unable to create ad", "error", err)
 			rw.WriteHeader(http.StatusInternalServerError)
 			return
 		}
@@ -66,4 +79,9 @@ func handlerCreateAd(createAd usecase.CreateAdFunc) http.HandlerFunc {
 		rw.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(rw).Encode(createAdResponse{ID: int64(adID)})
 	}
+}
+
+// retryAfterSeconds formats a Retry-After header value: whole seconds, rounded up, at least 1.
+func retryAfterSeconds(d time.Duration) string {
+	return strconv.Itoa(max(1, int(math.Ceil(d.Seconds()))))
 }
