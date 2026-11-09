@@ -22,6 +22,7 @@ paths:
   /ads:
     get:
       summary: List ads
+      description: Returns one page of the matching ads, newest first.
       operationId: listAds
       tags: [ads]
       parameters:
@@ -36,6 +37,7 @@ paths:
           description: Filter ads belonging to this owner.
           schema:
             type: string
+            format: uuid
           example: "00000000-0000-0000-0000-000000000001"
         - name: min_price_cents
           in: query
@@ -53,15 +55,37 @@ paths:
             format: int64
             minimum: 0
           example: 50000
+        - name: limit
+          in: query
+          description: Page size.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+          example: 20
+        - name: offset
+          in: query
+          description: Number of ads to skip, for the next pages.
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 10000
+            default: 0
+          example: 0
       responses:
         "200":
-          description: List of matching ads (may be empty).
+          description: One page of matching ads (may be empty).
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ListAdsResponse"
         "400":
-          description: Invalid query parameter (e.g. non-numeric price).
+          description: Invalid query parameter (non-numeric price, user_id not a UUID, limit out of range...).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
     post:
       summary: Create an ad
@@ -84,9 +108,15 @@ paths:
               schema:
                 $ref: "#/components/schemas/CreateAdResponse"
         "400":
-          description: Malformed or unknown request body field.
+          description: Malformed body, unknown field, or ad breaking a rule (empty title, negative price, invalid photo URL).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           description: Missing Authorization header.
+        "413":
+          description: Request body larger than 4 MB.
         "429":
           description: Publication quota exceeded (5 ads per rolling 24 hours through this endpoint).
           headers:
@@ -139,11 +169,15 @@ paths:
               schema:
                 $ref: "#/components/schemas/ImportAdsResponse"
         "400":
-          description: Invalid body, invalid price or Idempotency-Key longer than 255 characters. Nothing is created.
+          description: Invalid body, an ad breaking a rule, or Idempotency-Key longer than 255 characters. Nothing is created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           description: Missing Authorization header.
         "413":
-          description: More than 1000 ads in one import.
+          description: More than 1000 ads in one import, or request body larger than 4 MB.
         "422":
           description: The Idempotency-Key was already used with a different payload.
         "500":
@@ -261,12 +295,15 @@ components:
 
     ListAdsResponse:
       type: object
-      required: [ads]
+      required: [ads, has_more]
       properties:
         ads:
           type: array
           items:
             $ref: "#/components/schemas/Ad"
+        has_more:
+          type: boolean
+          description: Whether another page follows. Request it with offset + limit.
 
     CreateAdBody:
       type: object
@@ -275,6 +312,8 @@ components:
       properties:
         title:
           type: string
+          minLength: 1
+          maxLength: 200
           example: mountain bike
         price_cents:
           type: integer
@@ -287,9 +326,13 @@ components:
           format: decimal
           minimum: 0
           description: Price in euros, at most two decimals. Exponents are rejected.
+          maximum: 100000000
           example: 150.00
         photo_url:
           type: string
+          format: uri
+          maxLength: 2048
+          description: Absolute http or https URL.
           example: https://example.com/bike.jpg
 
     ImportAdsBody:
@@ -313,6 +356,14 @@ components:
             type: integer
             format: int64
           example: [101, 102]
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          example: "invalid ad: title is required"
 
     CreateAdResponse:
       type: object

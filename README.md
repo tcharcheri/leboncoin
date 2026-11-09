@@ -34,13 +34,13 @@ There are 2 entities in this sample:
 
 ## API
 
-| Method | Path          | Auth | Description                                                                       |
-|--------|---------------|------|-----------------------------------------------------------------------------------|
-| `POST` | `/ads`        | yes | Create an ad                                                                      |
-| `GET` | `/ads/{id}`   | no | Get a single ad                                                                   |
-| `GET` | `/ads`        | no | List ads (filterable by `title`, `user_id`, `min_price_cents`, `max_price_cents`) |
-| `POST` | `/ads/import` | yes | Bulk ad import                                                                    |
-| `DELETE` | `/ads/{id}`   | yes | Delete an ad (owner only)                                                         |
+| Method   | Path          | Auth | Description                                                                                          |
+|----------|---------------|------|------------------------------------------------------------------------------------------------------|
+| `GET`    | `/ads`        | no   | List ads, newest first (filters `title`, `user_id`, `min_price_cents`, `max_price_cents`; `limit`, `offset`) |
+| `GET`    | `/ads/{id}`   | no   | Get a single ad, with its owner's `username`                                                         |
+| `POST`   | `/ads`        | yes  | Create an ad (5 per rolling 24 hours)                                                                |
+| `DELETE` | `/ads/{id}`   | yes  | Delete an ad (owner only)                                                                            |
+| `POST`   | `/ads/import` | yes  | Bulk ad import, atomic and idempotent with an `Idempotency-Key` header                               |
 ```bash
 # Health check
 curl -s -v http://localhost:8080/health
@@ -130,3 +130,45 @@ The import inserted ads one by one without a transaction: a failure in the middl
 - **Client-friendly**: an exceeded quota answers `429 Too Many Requests` with a `Retry-After` header (seconds until the oldest publication leaves the window).
 - **Interpretation to confirm with the product owner**: "it does not apply to the bulk import" was read as "imports are not limited and do not consume the POST /ads quota".
 - Follow-ups: purge publications older than the window with a scheduled job; make the limit configurable if product needs it.
+
+### Production readiness
+
+The instructions ask for code "you feel comfortable shipping in production". Beyond the six items, the following gaps were closed.
+
+#### Input validation
+
+- **Domain rules**: an ad needs a non-blank title (200 characters max), a price between 0 and 100 million euros, and an absolute `http(s)` photo URL (2048 characters max). Zero is allowed: free items are common on a classifieds site.
+- **One place for the rules**: they live in the `domain` package and apply to `POST /ads` and to the bulk import alike; the HTTP layer only checks the format (valid JSON, readable price).
+- **Checked before any database call**: an invalid ad opens no transaction, takes no lock and consumes no quota. A single invalid ad rejects the whole import up front, with its position in the message (`ad #1: invalid ad: ...`).
+- **Security**: restricting photo URLs to `http(s)` blocks `javascript:` URLs, which web and mobile clients would otherwise render (XSS).
+- **Explicit errors**: `400` answers carry a JSON body (`{"error": "..."}`) that clients can show, instead of an empty response.
+
+#### Read performance (`GET /ads`)
+
+- **Pagination**: the endpoint returned the whole table. It now returns one page (`limit`, 20 by default, 100 max; `offset`, 10,000 max). `has_more` is computed by fetching one extra row, which avoids a `COUNT(*)` over the whole table.
+- **Stable order**: `ORDER BY created_at DESC, id DESC`. Without an `ORDER BY`, PostgreSQL returns rows in any order, so pages could overlap or skip ads.
+- **Indexes** (migration `005`): a trigram index (`pg_trgm`) for the title search, the only kind of index that serves `ILIKE '%bike%'`, plus b-tree indexes for the default listing, the ads of a seller and price ranges.
+- **Index-friendly query**: `user_id::text = $1` cast the column and defeated its index; `user_id` is now compared as a UUID, and the parameter is validated (`400` instead of a database error).
+- **Literal search**: `%` and `_` in the title filter are escaped, so searching `100%` no longer matches every ad.
+- **Connection pool**: configurable (`DB_MAX_OPEN_CONNS`, 20 by default) and fully kept idle, so read peaks do not reopen connections.
+- Measured on 200,000 ads: listing 0.08 ms (it returned every row before), title search 87 ms down to 4 ms, ads of a seller 26 ms down to 0.15 ms.
+
+#### HTTP server
+
+- **Body size limit**: 4 MB (`413`). A full import of 1000 ads stays well below it; without a limit, one large request could exhaust the memory.
+- **Timeouts**: Go sets none by default. Reading the request, writing the response and idle keep-alive connections are now bounded, so slow clients cannot hold connections forever.
+- **Panic recovery**: a middleware turns a panic into a `500` and logs the stack trace; `net/http` alone drops the connection without answering.
+- **Fail fast on wiring**: with manual dependency injection, a usecase left out of `main.go` compiled and panicked on its first request (it happened twice while working on this). `NewRouter` now refuses to start, and a test checks that every route answers.
+- **Strict JSON**: unknown fields and trailing data after the JSON value are rejected with a message.
+
+#### Image and CI
+
+- **Multi-stage image**: the binary is built in `golang` and shipped alone in `alpine` (about 20 MB instead of 300 MB, no compiler or sources in production), run by an unprivileged user. Alpine rather than distroless because the Compose healthcheck uses `wget`.
+- **CI** (GitHub Actions) on every push and pull request: `gofmt`, `go vet`, tests with the race detector, `govulncheck` for known vulnerabilities, and the image build.
+
+#### Follow-ups
+
+- Keyset pagination (`WHERE (created_at, id) < cursor`) to keep deep pages cheap; it changes the API contract, so it should be agreed with the web and mobile teams.
+- `CREATE INDEX CONCURRENTLY` and a migration tool (golang-migrate, goose) in production.
+- Observability: access logs, metrics and tracing (OpenTelemetry), and a readiness endpoint that checks the database.
+- Real authentication (JWT): the `Authorization` header is trusted as-is, so a malformed user id still reaches the database.
